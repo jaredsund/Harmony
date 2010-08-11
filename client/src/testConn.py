@@ -20,21 +20,27 @@ x = harmonyConn('sundhome.com', 1234)
 
 #test add star
 #(X,starID) = x.addStar(1,2,3)
-print "Add Star", x.addStar(1,2,3)
+print "Add Star", x.addStar(100,100,3)
+print "Add Star", x.addStar(200,200,3)
+print "Add Star", x.addStar(300,300,3)
 #print "Add Star", X, starID
 
 #test delete star
 #print "Del Star", x.delStar(0)
 
 #test add planet
-print "Add Planet", x.addPlanet(0,1,2,3,4)
-#print "Add Planet", x.addPlanet(0,5,6,7,8)
+print "Add Planet", x.addPlanet(0,1,2,30,4)
+print "Add Planet", x.addPlanet(0,5,6,30,8)
+print "Add Planet", x.addPlanet(0,1,2,60,4)
+print "Add Planet", x.addPlanet(1,1,2,30,4)
+print "Add Planet", x.addPlanet(1,5,6,30,8)
+print "Add Planet", x.addPlanet(1,5,6,60,8)
 
 #test delete planet
 #print "Del Planet ", x.delPlanet(32, 43)
 
 #test get universe
-print "getUNI ", x.getUNI((0,0,0))
+print "getUNI ", x.getUNI(0)
 
 
 
