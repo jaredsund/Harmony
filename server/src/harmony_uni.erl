@@ -12,8 +12,8 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0, add_star/3, del_star/1]).
--export([add_planet/5, del_planet/2, get_uni/1]).
+-export([start_link/0, add_star/1, del_star/1]).
+-export([add_planet/2, del_planet/2, get_uni/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -21,7 +21,7 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {bigbang, objs=0}).
+-record(state, {bigbang}).
 
 -include("harmony.hrl").
 -include_lib("stdlib/include/qlc.hrl").
@@ -40,15 +40,16 @@ start_link() ->
 %% Function: add_star(Xpos, Ypos) -> {ok, StarId} | {error,Error}
 %% Description: Adds a star to the Universe, or fails trying.
 %%--------------------------------------------------------------------
-add_star(Xpos, Ypos, Key) ->
-    gen_server:call(?SERVER, {add_star, Xpos, Ypos, Key}, ?TIMEOUT).
+add_star(Star=#star{id=null,xpos=Xpos,ypos=Ypos,key=Key})
+  when is_integer(Xpos); is_integer(Ypos); is_integer(Key) ->
+    gen_server:call(?SERVER, {add_star, Star}, ?TIMEOUT).
 
 %%--------------------------------------------------------------------
 %% Function: del_star(StarId) -> -> {ok, StarId} | {error,Error}
 %% Description: Deletes a star from the Universe, fails if
 %%              star does not exist.
 %%--------------------------------------------------------------------
-del_star(StarId) ->
+del_star(StarId) when is_integer(StarId) ->
     gen_server:call(?SERVER, {del_star, StarId}, ?TIMEOUT).
 
 %%--------------------------------------------------------------------
@@ -58,9 +59,13 @@ del_star(StarId) ->
 %% Description: Adds a planet to a star in the Universe. Fails
 %%              if the star does not exist.
 %%--------------------------------------------------------------------
-add_planet(StarId, Angle, Speed, Radius, Note) ->
+add_planet(StarId, Planet=#planet{id=null,angle=Angle,speed=Speed,
+                                  radius=Radius,note=Note})
+  when is_integer(StarId); is_integer(Angle); is_integer(Speed);
+       is_integer(Radius); is_integer(Note) ->
+    harmony_logger:info("Requested addition of planet to star ~p", [StarId]),
     gen_server:call(?SERVER,
-                    {add_planet, StarId, Angle, Speed, Radius, Note},
+                    {add_planet, StarId, Planet},
                     ?TIMEOUT).
 
 %%--------------------------------------------------------------------
@@ -70,10 +75,12 @@ add_planet(StarId, Angle, Speed, Radius, Note) ->
 %%              Universe. Fails if the star does not exist or
 %%              the planet does not exist.
 %%--------------------------------------------------------------------
-del_planet(StarId, PlanetId) ->
+del_planet(StarId, PlanetId)
+  when is_integer(StarId), is_integer(PlanetId) ->
     gen_server:call(?SERVER, {del_planet, StarId, PlanetId}, ?TIMEOUT).
 
-get_uni(Time) ->
+get_uni(Time)
+  when is_tuple(Time); tuple_size(Time) == 3 ->
     gen_server:call(?SERVER, {get_uni, Time}, ?TIMEOUT).
 
 %%====================================================================
@@ -88,13 +95,16 @@ get_uni(Time) ->
 %% Description: Initiates the server
 %%--------------------------------------------------------------------
 init([]) ->
-    mnesia:create_table(star,     [{attributes, record_info(fields, star)}]),
-    mnesia:create_table(planet,   [{attributes, record_info(fields, planet)}]),
-    mnesia:create_table(in_orbit, [{attributes, record_info(fields, in_orbit)},
-                                   {type, bag}]),
-    mnesia:create_schema([node()|nodes()]),
-    mnesia:start(),
-    State = #state{bigbang=erlang:now()},
+    {ok, File} = application:get_env(harmony, uni_dets),
+    {ok, UniDB} = dets:open_file(uni_db, {file, File}),
+    Now = erlang:now(),
+    case dets:insert_new(UniDB, {bigbang, Now}) of
+        true ->
+            State = #state{bigbang=Now};
+        false ->
+            [{bigbang,BigBang}] = dets:lookup(UniDB, bigbang),
+            State = #state{bigbang=BigBang}
+    end,
     {ok, State}.
 
 %%--------------------------------------------------------------------
@@ -106,15 +116,18 @@ init([]) ->
 %%                                      {stop, Reason, State}
 %% Description: Handling call messages
 %%--------------------------------------------------------------------
-handle_call({add_star, Xpos, Ypos, Key}, _From,
-            State = #state{objs=StarId}) ->
-    Star  = #star{id=StarId, xpos=Xpos, ypos=Ypos, key=Key},
+handle_call({add_star, InpStar}, _From, State)
+  when is_record(InpStar, star) ->
+    StarId = star_counter(),
+    Star  = InpStar#star{id=StarId},
     Fun = fun() -> mnesia:write(Star) end,
     mnesia:transaction(Fun),
     Reply = {ok, StarId},
-    {reply, Reply, State#state{objs=StarId+1}};
+    harmony_logger:info("Haved added Star ~p", [Star]),
+    {reply, Reply, State};
 
-handle_call({del_star, StarId}, _From, State) ->
+handle_call({del_star, StarId}, _From, State)
+  when is_integer(StarId) ->
     Orbit = #in_orbit{star_id=StarId, planet_id='_'},
     PlanDel = fun(Planet) ->
                       P_id = Planet#planet.id,
@@ -134,12 +147,13 @@ handle_call({del_star, StarId}, _From, State) ->
     Reply = {ok, StarId},
     {reply, Reply, State};
 
-handle_call({add_planet, StarId, Angle, Speed, Radius, Note}, _From,
-            State = #state{objs=PlanetId}) ->
-    Star = #star{id=StarId, _='_'},
-    harmony_logger:info("StarId ~p gives Star ~p", [StarId, Star]),
-    Planet = #planet{id=PlanetId, radius=Radius, speed=Speed,
-                     angle=Angle, note=Note},
+handle_call({add_planet, StarId, InpPlanet}, _From, State)
+  when is_integer(StarId); is_record(InpPlanet, planet) ->
+    PlanetId = planet_counter(),
+    Now = erlang:now(),
+    star_modified(StarId, Now),
+    Planet = InpPlanet#planet{id=PlanetId,created=Now},
+    harmony_logger:info("Adding planet ~p to star ~p", [PlanetId, StarId]),
     Orbit  = #in_orbit{star_id=StarId, planet_id=PlanetId},
     Fun = fun() ->
                   mnesia:write(Orbit),
@@ -147,9 +161,11 @@ handle_call({add_planet, StarId, Angle, Speed, Radius, Note}, _From,
           end,
     mnesia:transaction(Fun),
     Reply = {ok, PlanetId},
-    {reply, Reply, State#state{objs=PlanetId+1}};
+    harmony_logger:info("Haved added Planet ~p", [Planet]),
+    {reply, Reply, State};
 
-handle_call({del_planet, StarId, PlanetId}, _From, State) ->
+handle_call({del_planet, StarId, PlanetId}, _From, State)
+  when is_integer(StarId); is_integer(PlanetId) ->
     Planet = #planet{id=PlanetId, _='_'},
     Orbit  = #in_orbit{star_id=StarId, planet_id=PlanetId},
     Fun = fun() ->
@@ -160,7 +176,8 @@ handle_call({del_planet, StarId, PlanetId}, _From, State) ->
     Reply = {ok, PlanetId},
     {reply, Reply, State};
 
-handle_call({get_uni, Time}, _From, State) ->
+handle_call({get_uni, Time}, _From, State)
+  when is_tuple(Time); tuple_size(Time) == 3 ->
     F = fun() ->
                 Stars = qlc:e(all_stars(Time)),
                 Sys = [#system{star=S,
@@ -172,12 +189,14 @@ handle_call({get_uni, Time}, _From, State) ->
     Reply = {ok, U},
     {reply, Reply, State}.
 
-all_stars(Time) ->
+all_stars(Time)
+  when is_tuple(Time); tuple_size(Time) == 3 ->
     qlc:q([S || S <- mnesia:table(star),
                 time_ge(S#star.modified,Time)
           ]).
 
-all_planets(Star, Time) ->
+all_planets(Star, Time)
+  when is_record(Star, star); is_tuple(Time); tuple_size(Time) == 3 ->
     qlc:q([P ||
               P <- mnesia:table(planet),
               O <- mnesia:table(in_orbit),
@@ -202,7 +221,8 @@ handle_cast(_Msg, State) ->
 %%                                       {stop, Reason, State}
 %% Description: Handling all non call/cast messages
 %%--------------------------------------------------------------------
-handle_info(_Info, State) ->
+handle_info(Info, State) ->
+    harmony_logger:info("Universe was cast this message: ~p", [Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -242,6 +262,22 @@ code_change(_OldVsn, State, _Extra) ->
 %% %%--------------------------------------------------------------------
 %% new_star(Xpos, Ypos) ->
 %%     #star{xpos=Xpos, ypos=Ypos}.
+
+star_modified(StarID, Now)
+  when is_integer(StarID); is_tuple(Now); tuple_size(Now) == 3 ->
+    fun() ->
+            [S] = mnesia:wread({star, StarID}),
+            mnesia:write(S#star{modified=Now})
+    end.
+
+planet_counter() ->
+    obj_counter(planet).
+
+star_counter() ->
+    obj_counter(star).
+
+obj_counter(Type) ->
+    mnesia:dirty_update_counter(counter, Type, 1).
 
 map_(F, [H|T]) ->
     F(H),

@@ -1,14 +1,14 @@
 -type(id() :: integer()).
 -type(time() :: {integer(), integer(), integer()}).
 
--record(star, {id      :: id(),
+-record(star, {id=null :: id(),
                xpos    :: integer(),
                ypos    :: integer(),
                key     :: integer(),
                modified=erlang:now() :: time()
               }).
 
--record(planet, {id        :: id(),
+-record(planet, {id=null   :: id(),
                  radius    :: integer(),
                  speed     :: integer(),
                  angle     :: integer(),
@@ -24,5 +24,8 @@
                    planets       :: [#planet{}]}).
 -record(universe, {time        :: time(),
                    stars       :: [#system{}]}).
+
+-record(counter, {key   :: atom(),
+                  value :: integer()}).
 
 -define(TIMEOUT, 150).
